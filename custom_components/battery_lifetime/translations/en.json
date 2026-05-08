@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Battery Lifetime",
-        "description": "Battery Lifetime tracks every numeric percent battery sensor in Home Assistant. After installation, every eligible battery automatically gets a set of companion entities (predicted replacement date, observed drain rate, profile selector, mark-replaced button, etc.). You can opt out individual batteries later. Press Submit to continue."
+        "description": "**\u26a0 HEADS UP \u2014 INITIAL SETUP CAN TAKE SEVERAL MINUTES.**\n\nBattery Lifetime auto-discovers every numeric percent battery sensor in Home Assistant and creates around eight companion entities per battery (replace-by, drain rate, profile, threshold, etc.).\n\n**IF YOU HAVE MANY BATTERY-POWERED DEVICES \u2014 SAY 50+ BATTERIES, WHICH MEANS 400+ NEW ENTITIES \u2014 THE UI WILL APPEAR FROZEN FOR SEVERAL MINUTES AFTER YOU PRESS SUBMIT** while the entities are registered and the one-time cold-start backfill from long-term statistics runs. **Don't reload, don't cancel \u2014 just wait. It is working.**\n\nYou can opt out individual batteries from the integration's options afterwards. Press Submit to continue."
       }
     },
     "abort": {
