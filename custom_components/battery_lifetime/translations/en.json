@@ -1,0 +1,162 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Battery Lifetime",
+        "description": "Battery Lifetime tracks every numeric percent battery sensor in Home Assistant. After installation, every eligible battery automatically gets a set of companion entities (predicted replacement date, observed drain rate, profile selector, mark-replaced button, etc.). You can opt out individual batteries later. Press Submit to continue."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Battery Lifetime can only be added once."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Battery Lifetime options",
+        "menu_options": {
+          "default_profile": "Default chemistry profile for new batteries",
+          "bulk_overview": "Edit a tracked battery"
+        }
+      },
+      "default_profile": {
+        "title": "Default chemistry profile",
+        "description": "This is the profile that newly discovered batteries start with. You can override the chemistry per battery via the lithium switch on each battery's device card.",
+        "data": {
+          "default_profile": "Default profile"
+        }
+      },
+      "bulk_overview": {
+        "title": "Edit a tracked battery",
+        "description": "Pick a tracked battery to edit its profile, tracking-enabled state, or threshold override.",
+        "data": {
+          "battery": "Battery"
+        }
+      },
+      "edit_battery": {
+        "title": "{entity_id}",
+        "description": "Last replaced: {replaced_on}",
+        "data": {
+          "tracking_enabled": "Tracking enabled",
+          "profile_lithium": "Lithium chemistry (off = alkaline)",
+          "threshold_override": "Threshold override (%) — leave blank for profile default"
+        }
+      }
+    },
+    "abort": {
+      "no_batteries": "No batteries are currently tracked."
+    }
+  },
+  "selector": {
+    "default_profile": {
+      "options": {
+        "alkaline": "Alkaline",
+        "lithium": "Lithium primary"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "replace_by": {
+        "name": "Replace by"
+      },
+      "prediction_quality": {
+        "name": "Prediction quality",
+        "state": {
+          "no_data": "No data",
+          "profile_default": "Profile default",
+          "low": "Low",
+          "medium": "Medium",
+          "high": "High",
+          "stale": "Stale"
+        }
+      },
+      "drain_rate": {
+        "name": "Drain rate"
+      },
+      "due_this_month": {
+        "name": "Due this month"
+      },
+      "due_next_3_months": {
+        "name": "Due in next 3 months"
+      }
+    },
+    "switch": {
+      "profile_lithium": {
+        "name": "Lithium chemistry"
+      },
+      "tracking_enabled": {
+        "name": "Tracking enabled"
+      }
+    },
+    "button": {
+      "mark_replaced": {
+        "name": "Mark replaced"
+      }
+    },
+    "date": {
+      "replaced_on": {
+        "name": "Replaced on"
+      }
+    },
+    "number": {
+      "threshold_override": {
+        "name": "Threshold override"
+      }
+    }
+  },
+  "services": {
+    "predict_at": {
+      "name": "Predict at date",
+      "description": "Forward-simulate every tracked battery to a target date.",
+      "fields": {
+        "date": {
+          "name": "Target date",
+          "description": "ISO 8601 calendar date to simulate forward to."
+        },
+        "margin_days": {
+          "name": "Margin (days)",
+          "description": "Optional safety margin pulled forward from the target date."
+        },
+        "actionable_only": {
+          "name": "Actionable only",
+          "description": "Only return batteries projected to be at or below their threshold."
+        },
+        "include_excluded": {
+          "name": "Include excluded batteries",
+          "description": "Include batteries whose tracking_enabled switch is off."
+        }
+      }
+    },
+    "confirm_stale_replacement": {
+      "name": "Confirm stale-prior replacement",
+      "description": "Confirm a battery replacement that was flagged via a persistent notification.",
+      "fields": {
+        "entity_id": {
+          "name": "Source battery entity",
+          "description": "The source battery sensor named in the notification."
+        }
+      }
+    },
+    "dismiss_stale_replacement": {
+      "name": "Dismiss stale-prior replacement",
+      "description": "Discard a stale-prior replacement candidate without committing.",
+      "fields": {
+        "entity_id": {
+          "name": "Source battery entity",
+          "description": "The source battery sensor named in the notification."
+        }
+      }
+    },
+    "exclude_stale_replacement": {
+      "name": "Exclude battery from a stale-prior notification",
+      "description": "Discard the candidate and turn tracking off for the battery.",
+      "fields": {
+        "entity_id": {
+          "name": "Source battery entity",
+          "description": "The source battery sensor named in the notification."
+        }
+      }
+    }
+  }
+}

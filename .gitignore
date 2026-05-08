@@ -1,0 +1,18 @@
+.git/credentials
+.worktree/
+.agent-lock
+__pycache__/
+*.pyc
+.venv/
+.credentials*
+*.swp
+.github-token
+
+# Leftover artifacts from sibling PerfectDraft project (carried over by accident)
+custom_components/perfectdraft/
+custom_components/perfectdraft.zip
+
+# Test/coverage artifacts
+.pytest_cache/
+.coverage
+htmlcov/

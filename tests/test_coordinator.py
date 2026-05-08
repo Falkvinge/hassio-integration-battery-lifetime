@@ -1,0 +1,342 @@
+"""Tests for entity-source discovery and the coordinator."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import pytest
+from homeassistant.components.sensor import SensorDeviceClass
+from homeassistant.const import PERCENTAGE
+from homeassistant.helpers import entity_registry as er
+
+from custom_components.battery_lifetime.const import DOMAIN
+from custom_components.battery_lifetime.coordinator import (
+    BatteryLifetimeCoordinator,
+)
+from custom_components.battery_lifetime.discovery import (
+    is_eligible,
+    iter_eligible_entities,
+    reset_skip_log,
+)
+from custom_components.battery_lifetime.store import BatteryLifetimeStore
+
+UTC = timezone.utc
+
+
+@pytest.fixture(autouse=True)
+def _reset_skip_log() -> None:
+    reset_skip_log()
+
+
+def _register(
+    registry: er.EntityRegistry,
+    *,
+    entity_id: str,
+    unique_id: str,
+    platform: str = "demo",
+    device_class: str | None = SensorDeviceClass.BATTERY,
+    unit: str | None = PERCENTAGE,
+) -> er.RegistryEntry:
+    domain, object_id = entity_id.split(".", 1)
+    return registry.async_get_or_create(
+        domain=domain,
+        platform=platform,
+        unique_id=unique_id,
+        suggested_object_id=object_id,
+        original_device_class=device_class,
+        unit_of_measurement=unit,
+    )
+
+
+async def test_is_eligible_accepts_numeric_percent_battery(hass: Any) -> None:
+    registry = er.async_get(hass)
+    entry = _register(
+        registry, entity_id="sensor.foo_battery", unique_id="uid-foo"
+    )
+    hass.states.async_set("sensor.foo_battery", "62", {})
+    assert is_eligible(hass, entry) is True
+
+
+async def test_is_eligible_rejects_categorical_state(hass: Any) -> None:
+    registry = er.async_get(hass)
+    entry = _register(
+        registry, entity_id="sensor.foo_battery", unique_id="uid-foo"
+    )
+    hass.states.async_set("sensor.foo_battery", "low", {})
+    assert is_eligible(hass, entry) is False
+
+
+async def test_is_eligible_rejects_voltage_unit(hass: Any) -> None:
+    registry = er.async_get(hass)
+    entry = _register(
+        registry,
+        entity_id="sensor.foo_battery",
+        unique_id="uid-foo",
+        unit="V",
+    )
+    hass.states.async_set("sensor.foo_battery", "1.5", {})
+    assert is_eligible(hass, entry) is False
+
+
+async def test_is_eligible_rejects_binary_battery(hass: Any) -> None:
+    registry = er.async_get(hass)
+    entry = _register(
+        registry,
+        entity_id="binary_sensor.foo_battery_low",
+        unique_id="uid-foo",
+        device_class=SensorDeviceClass.BATTERY,
+        unit=None,
+    )
+    hass.states.async_set("binary_sensor.foo_battery_low", "off", {})
+    assert is_eligible(hass, entry) is False
+
+
+async def test_is_eligible_rejects_companion_entities(hass: Any) -> None:
+    registry = er.async_get(hass)
+    entry = registry.async_get_or_create(
+        domain="sensor",
+        platform=DOMAIN,
+        unique_id="battery_lifetime:foo:replace_by",
+        suggested_object_id="foo_battery_replace_by",
+        original_device_class="timestamp",
+    )
+    hass.states.async_set("sensor.foo_battery_replace_by", "2026-09-14T00:00:00+00:00", {})
+    assert is_eligible(hass, entry) is False
+
+
+async def test_iter_eligible_filters_correctly(hass: Any) -> None:
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "73", {})
+    _register(
+        registry, entity_id="sensor.bar_battery", unique_id="uid-bar"
+    )
+    hass.states.async_set("sensor.bar_battery", "low", {})
+    eligible = [e.entity_id for e in iter_eligible_entities(hass)]
+    assert eligible == ["sensor.foo_battery"]
+
+
+async def test_coordinator_creates_record_for_eligible_entity(
+    hass: Any,
+) -> None:
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+
+    assert "uid-foo" in coord.records
+    record = coord.records["uid-foo"]
+    assert record.entity_id == "sensor.foo_battery"
+    assert record.last_reading_pct == 84.0
+    await coord.async_shutdown()
+
+
+async def test_coordinator_handles_state_change(hass: Any) -> None:
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    record = coord.records["uid-foo"]
+    record.replaced_on = datetime.now(tz=UTC) - timedelta(days=10)
+    record.ewma.baseline_pct = 100.0
+    record.ewma.baseline_at = record.replaced_on
+    record.ewma.last_pct = 84.0
+    record.ewma.last_at = record.replaced_on
+
+    hass.states.async_set("sensor.foo_battery", "82", {})
+    await hass.async_block_till_done()
+
+    assert coord.records["uid-foo"].last_reading_pct == 82.0
+    await coord.async_shutdown()
+
+
+async def test_coordinator_summary_data_via_refresh(hass: Any) -> None:
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    record = coord.records["uid-foo"]
+    record.replaced_on = datetime.now(tz=UTC) - timedelta(days=70)
+    record.ewma.baseline_pct = 100.0
+    record.ewma.baseline_at = record.replaced_on
+    record.ewma.last_pct = 84.0
+    record.ewma.last_at = record.replaced_on
+    record.ewma.rate = 0.2
+
+    snapshots = await coord._async_update_data()
+    assert "uid-foo" in snapshots
+    snap = snapshots["uid-foo"]
+    assert snap.prediction.replace_by is not None
+    await coord.async_shutdown()
+
+
+async def test_coordinator_persists_state_across_restart(hass: Any) -> None:
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store_a = BatteryLifetimeStore(hass)
+    await store_a.async_load()
+    coord_a = BatteryLifetimeCoordinator(hass, store=store_a)
+    await coord_a.async_setup()
+    record = coord_a.records["uid-foo"]
+    record.replaced_on = datetime(2026, 4, 1, tzinfo=UTC)
+    coord_a._persist(record)
+    await store_a.async_save()
+    await coord_a.async_shutdown()
+
+    store_b = BatteryLifetimeStore(hass)
+    await store_b.async_load()
+    coord_b = BatteryLifetimeCoordinator(hass, store=store_b)
+    await coord_b.async_setup()
+    assert coord_b.records["uid-foo"].replaced_on == datetime(
+        2026, 4, 1, tzinfo=UTC
+    )
+    await coord_b.async_shutdown()
+
+
+async def test_set_replaced_on_rejects_future(hass: Any) -> None:
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    with pytest.raises(ValueError):
+        await coord.set_replaced_on(
+            "uid-foo", datetime.now(tz=UTC) + timedelta(days=1)
+        )
+    await coord.async_shutdown()
+
+
+async def test_runtime_registry_add_creates_record(hass: Any) -> None:
+    """A new eligible battery added at runtime gets a record without reload."""
+    registry = er.async_get(hass)
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    assert coord.records == {}
+
+    _register(registry, entity_id="sensor.late_battery", unique_id="uid-late")
+    hass.states.async_set("sensor.late_battery", "73", {})
+    hass.bus.async_fire(
+        "entity_registry_updated",
+        {"action": "create", "entity_id": "sensor.late_battery"},
+    )
+    await hass.async_block_till_done()
+
+    assert "uid-late" in coord.records
+    assert coord.records["uid-late"].entity_id == "sensor.late_battery"
+    await coord.async_shutdown()
+
+
+async def test_removed_source_within_retention_restores_state(
+    hass: Any,
+) -> None:
+    """A removed-then-readded source within retention keeps replaced_on, profile.
+
+    Drives the registry directly (``async_remove`` / ``async_get_or_create``)
+    so the registry's own remove/create events flow into the coordinator's
+    listener, mirroring real HA behaviour.
+    """
+    registry = er.async_get(hass)
+    entry = _register(
+        registry, entity_id="sensor.foo_battery", unique_id="uid-foo"
+    )
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+
+    pinned_replaced_on = datetime(2026, 4, 1, tzinfo=UTC)
+    record = coord.records["uid-foo"]
+    record.replaced_on = pinned_replaced_on
+    record.profile_id = "alkaline"
+    record.threshold_override = 22.0
+    coord._persist(record)
+    await store.async_save()
+
+    registry.async_remove(entry.entity_id)
+    hass.states.async_remove("sensor.foo_battery")
+    hass.bus.async_fire(
+        "entity_registry_updated",
+        {"action": "remove", "entity_id": "sensor.foo_battery"},
+    )
+    await hass.async_block_till_done()
+    assert "uid-foo" not in coord.records
+    stored = store.get_battery("uid-foo")
+    assert stored is not None
+    assert stored.get("removed_at") is not None
+
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+    hass.bus.async_fire(
+        "entity_registry_updated",
+        {"action": "create", "entity_id": "sensor.foo_battery"},
+    )
+    await hass.async_block_till_done()
+
+    assert "uid-foo" in coord.records
+    restored = coord.records["uid-foo"]
+    assert restored.replaced_on == pinned_replaced_on
+    assert restored.profile_id == "alkaline"
+    assert restored.threshold_override == 22.0
+    await coord.async_shutdown()
+
+
+async def test_source_without_unique_id_logged_and_skipped(
+    hass: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A registry entry without a unique_id is skipped and warned about.
+
+    HA's public ``async_get_or_create`` requires ``unique_id``, so this
+    scenario is reached by forging a synthetic registry-entry-like object
+    and calling ``is_eligible`` directly. The branch under test is defensive
+    code for legacy registry rows that predate the unique_id requirement.
+    """
+    import logging
+    from types import SimpleNamespace
+
+    caplog.set_level(
+        logging.WARNING, logger="custom_components.battery_lifetime"
+    )
+    hass.states.async_set(
+        "sensor.no_uid_battery",
+        "55",
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    fake_entry = SimpleNamespace(
+        entity_id="sensor.no_uid_battery",
+        unique_id=None,
+        platform="demo",
+        disabled=False,
+        hidden_by=None,
+        device_class=SensorDeviceClass.BATTERY,
+        original_device_class=SensorDeviceClass.BATTERY,
+        unit_of_measurement=PERCENTAGE,
+    )
+
+    assert is_eligible(hass, fake_entry) is False  # type: ignore[arg-type]
+    assert any(
+        "no unique_id" in record.message
+        and "sensor.no_uid_battery" in record.message
+        for record in caplog.records
+    )

@@ -1,0 +1,98 @@
+predict_at:
+  name: Predict at date
+  description: >-
+    Forward-simulate every tracked battery to a target date and return
+    either every battery's projected state (default) or only those
+    projected to be at or below their replacement threshold.
+  fields:
+    date:
+      name: Target date
+      description: ISO 8601 calendar date to simulate forward to.
+      required: true
+      example: "2026-10-15"
+      selector:
+        date: {}
+    margin_days:
+      name: Margin (days)
+      description: >-
+        Optional safety margin pulled forward from the target date. Useful
+        for "before I leave the cottage" planning.
+      required: false
+      default: 0
+      example: 14
+      selector:
+        number:
+          min: 0
+          max: 365
+          unit_of_measurement: days
+          mode: box
+    actionable_only:
+      name: Actionable only
+      description: >-
+        If true, return only batteries projected to be at or below their
+        active threshold at the target date.
+      required: false
+      default: false
+      selector:
+        boolean: {}
+    include_excluded:
+      name: Include excluded batteries
+      description: >-
+        If true, include batteries whose tracking_enabled switch is off
+        (with an ``excluded: true`` flag in the response).
+      required: false
+      default: false
+      selector:
+        boolean: {}
+
+confirm_stale_replacement:
+  name: Confirm stale-prior replacement
+  description: >-
+    Confirm a battery replacement that the integration flagged via a
+    persistent notification because the prior reading was older than the
+    30-day staleness window. Sets ``replaced_on`` to the timestamp of the
+    first ``100%`` reading observed during the stale episode.
+  fields:
+    entity_id:
+      name: Source battery entity
+      description: The source battery sensor (the entity named in the notification).
+      required: true
+      example: sensor.cottage_smoke_alarm_battery
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+
+dismiss_stale_replacement:
+  name: Dismiss stale-prior replacement
+  description: >-
+    Discard a stale-prior replacement candidate without committing a
+    replacement. Tracking remains enabled.
+  fields:
+    entity_id:
+      name: Source battery entity
+      description: The source battery sensor (the entity named in the notification).
+      required: true
+      example: sensor.cottage_smoke_alarm_battery
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery
+
+exclude_stale_replacement:
+  name: Exclude battery from a stale-prior notification
+  description: >-
+    Discard a stale-prior replacement candidate AND turn tracking off for
+    the battery (sets ``switch.<src>_tracking_enabled`` to ``off``). Use
+    this when the battery should not be tracked at all (rechargeables,
+    EcoFlow whole-house batteries, etc.).
+  fields:
+    entity_id:
+      name: Source battery entity
+      description: The source battery sensor (the entity named in the notification).
+      required: true
+      example: sensor.cottage_smoke_alarm_battery
+      selector:
+        entity:
+          domain: sensor
+          device_class: battery

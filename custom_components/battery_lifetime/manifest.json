@@ -1,0 +1,14 @@
+{
+  "domain": "battery_lifetime",
+  "name": "Battery Lifetime",
+  "version": "0.1.0",
+  "documentation": "https://git.falkvinge.net/rick/hassio-battery-lifetime-integration",
+  "issue_tracker": "https://git.falkvinge.net/rick/hassio-battery-lifetime-integration/issues",
+  "codeowners": ["@rickfalkvinge"],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "integration_type": "service",
+  "requirements": [],
+  "dependencies": [],
+  "after_dependencies": ["recorder"]
+}
