@@ -1,10 +1,12 @@
 # Agent Handoff — Battery Lifetime
 
-## Current State (2026-05-08)
+## Current State (2026-05-09)
 
-The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.1** on GitHub via HACS.
+The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.2** on GitHub via HACS.
 
 The OpenSpec change `add-battery-lifetime` is at 56/62 tasks; the remaining six (10.2–10.7) are manual-validation gates against a real HA install. Some are implicitly being validated right now by the live install; see "What Needs Doing Next" below.
+
+The OpenSpec change `optimize-coordinator-tick` (v0.1.2 release) is fully archived under `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/`. Specs synced to `openspec/specs/coordinator-scheduling/spec.md`.
 
 ## What's Done
 
@@ -23,34 +25,21 @@ The OpenSpec change `add-battery-lifetime` is at 56/62 tasks; the remaining six 
 - HACS packaging (`hacs.json`, `info.md`, `README.md`, `LICENSE`, `manifest.json`).
 - 107 unit tests passing under `pytest-homeassistant-custom-component`.
 - v0.1.0 released and installed live on the user's HA install. v0.1.1 follow-up adds a bold/all-caps setup-time warning to the config dialog and ships icon assets in `custom_components/battery_lifetime/brand/` (256×256 + 512×512).
-- Both `master` and tags `v0.1.0`/`v0.1.1` pushed to gitea (origin) and GitHub (github).
-- README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly.
+- v0.1.2 ships three coordinator scheduling optimizations (drop redundant 10-minute timer, per-source-event O(1) update via `async_set_updated_data`, diff-gated heartbeat publish). 5 new tests in `tests/test_coordinator.py`, full suite 112 passed.
+- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2` pushed to gitea (origin) and GitHub (github).
+- README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly. `coordinator-scheduling/spec.md` documents the per-event vs heartbeat contracts.
 
 ## What Needs Doing Next (Immediate)
 
-### 1. Brands PR for the HACS icon
+### 1. ~~Brands PR for the HACS icon~~ — OBSOLETE as of HA 2026.3
 
-HACS sources its integration icons from [home-assistant/brands](https://github.com/home-assistant/brands), not from the integration repo. The local assets at `custom_components/battery_lifetime/brand/icon.png` (256) and `icon@2x.png` (512) are ready to ship. To make HACS display them:
+Home Assistant 2026.3 (announcement: <https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api>) introduced a local Brands Proxy API. Custom integrations now ship `brand/icon.png`, `brand/icon@2x.png` (and optionally `logo.png` / `dark_*.png`) inside their own repository, and HA serves them from `/api/brands/integration/<domain>/icon.png`. The `home-assistant/brands` repo **auto-closes** PRs for `custom_integrations/*` and tells contributors to use the inline mechanism (verified via closed PRs `home-assistant/brands#10149` and `#10230` cited in `hacs/integration#5223`).
 
-```bash
-GH_TOKEN=$(cat /home/rick/Lab/Dev/Hassio-PerfectDraftPro/.github-token) gh repo fork home-assistant/brands --clone --remote
-cd brands
-git checkout -b add-battery-lifetime
-mkdir -p custom_integrations/battery_lifetime
-cp /home/rick/Lab/Dev/Hassio-Battery-Lifetimes/custom_components/battery_lifetime/brand/icon.png      custom_integrations/battery_lifetime/icon.png
-cp /home/rick/Lab/Dev/Hassio-Battery-Lifetimes/custom_components/battery_lifetime/brand/icon@2x.png   custom_integrations/battery_lifetime/icon@2x.png
-# logo.png + logo@2x.png are usually required too — same image is fine for an icon-only brand
-cp /home/rick/Lab/Dev/Hassio-Battery-Lifetimes/custom_components/battery_lifetime/brand/icon.png      custom_integrations/battery_lifetime/logo.png
-cp /home/rick/Lab/Dev/Hassio-Battery-Lifetimes/custom_components/battery_lifetime/brand/icon@2x.png   custom_integrations/battery_lifetime/logo@2x.png
-git add custom_integrations/battery_lifetime
-git commit -m "Add battery_lifetime"
-git push origin add-battery-lifetime
-GH_TOKEN=... gh pr create --repo home-assistant/brands \
-  --title "Add battery_lifetime" \
-  --body "Custom integration: https://github.com/Falkvinge/hassio-integration-battery-lifetime"
-```
+We already ship `custom_components/battery_lifetime/brand/icon.png` (256×256) and `icon@2x.png` (512×512), so on the user's HA 2026.4.x install the icon is already served by HA core in **Settings → Devices & Services**, the integration card, and the config-flow dialog. **No PR needed.**
 
-CI in brands runs Pillow checks for image dimensions and format; the assets satisfy them (sized correctly, transparent, RGBA).
+The one remaining gap is HACS's own dashboard (Downloads / repository list), which still calls the old CDN URL because `hacs/frontend` hasn't been bumped past the brands-proxy rewrite. Tracked in `hacs/integration#5179` and `#5223`; fix PRs `hacs/integration#5228`, `hacs/frontend#937`, `#929`, `#5249` are open but unmerged. Until HACS frontend ships those, the HACS Downloads panel will keep showing "icon not available". This is a HACS issue, not ours.
+
+Optional polish: add `brand/logo.png` and `brand/logo@2x.png` (same image as icon is fine for an icon-only brand) so that places consuming the logo asset get something instead of the placeholder.
 
 ### 2. OpenSpec manual-validation gates 10.2 – 10.7
 
@@ -72,6 +61,7 @@ User reported that pressing **Submit** on the config dialog locked the UI for se
 - `_scan_initial_entities` in `custom_components/battery_lifetime/coordinator.py` calls `_ensure_record` for every eligible entity sequentially, and each call awaits the cold-start backfill (`_attempt_cold_start_backfill` → `recorder.async_add_executor_job` → two recorder queries per battery). With 70 batteries that's 140 recorder queries serialized.
 - Mitigations to consider: gate cold-start backfill behind a background task instead of blocking setup; batch the recorder queries via `recorder.history.get_significant_states` for all entity_ids at once; or just defer the backfill to the first scheduled coordinator tick (already 10 minutes after setup) and let setup return immediately.
 - Lazy-import note: cold-start should not block any of the *other* setup steps — the entity platforms are forwarded after `coordinator.async_setup()` returns. So the freeze is squarely in `_scan_initial_entities`.
+- v0.1.2 did NOT touch this. The coordinator-tick optimization is downstream of setup; the freeze is upstream. Still open.
 
 ### 4. Loose ends from earlier sessions
 
@@ -154,6 +144,8 @@ GH_TOKEN=$(cat /home/rick/Lab/Dev/Hassio-PerfectDraftPro/.github-token) \
 
 ## OpenSpec Status
 
+### Active changes
+
 Change directory: `openspec/changes/add-battery-lifetime/`
 
 | Artifact | Status |
@@ -164,3 +156,7 @@ Change directory: `openspec/changes/add-battery-lifetime/`
 | `tasks.md` | 56/62 (10.2 – 10.7 are the manual-validation gates) |
 
 Ready to archive once 10.2 – 10.5 are observed live and the boxes are checked. 10.6 and 10.7 are already effectively done.
+
+### Archived changes
+
+- `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/` — v0.1.2 release. Synced spec `coordinator-scheduling` is at `openspec/specs/coordinator-scheduling/spec.md`.
