@@ -302,6 +302,156 @@ async def test_removed_source_within_retention_restores_state(
     await coord.async_shutdown()
 
 
+async def test_coordinator_uses_single_periodic_timer(hass: Any) -> None:
+    """The framework's update_interval must be off; only the explicit tick fires."""
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    assert coord.update_interval is None
+    assert coord._unsub_tick is not None
+    await coord.async_shutdown()
+
+
+async def test_source_event_does_not_recompute_other_records(
+    hass: Any,
+) -> None:
+    """A single source's state change must not recompute peers' Predictions."""
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    _register(registry, entity_id="sensor.bar_battery", unique_id="uid-bar")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+    hass.states.async_set("sensor.bar_battery", "60", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    for uid in ("uid-foo", "uid-bar"):
+        rec = coord.records[uid]
+        rec.replaced_on = datetime.now(tz=UTC) - timedelta(days=70)
+        rec.ewma.baseline_pct = 100.0
+        rec.ewma.baseline_at = rec.replaced_on
+        rec.ewma.last_pct = rec.last_reading_pct
+        rec.ewma.last_at = rec.replaced_on
+        rec.ewma.rate = 0.2
+
+    await coord.async_request_refresh()
+    await hass.async_block_till_done()
+    assert coord.data is not None
+    bar_pred_before = coord.data["uid-bar"].prediction
+
+    hass.states.async_set("sensor.foo_battery", "82", {})
+    await hass.async_block_till_done()
+
+    bar_pred_after = coord.data["uid-bar"].prediction
+    assert bar_pred_after is bar_pred_before
+    assert coord.data["uid-foo"].record.last_reading_pct == 82.0
+    await coord.async_shutdown()
+
+
+async def test_idle_heartbeat_does_not_publish(hass: Any) -> None:
+    """When nothing observable changed, the heartbeat must not push a snapshot."""
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    rec = coord.records["uid-foo"]
+    rec.replaced_on = datetime.now(tz=UTC) - timedelta(days=70)
+    rec.ewma.baseline_pct = 100.0
+    rec.ewma.baseline_at = rec.replaced_on
+    rec.ewma.last_pct = 84.0
+    rec.ewma.last_at = rec.replaced_on
+    rec.ewma.rate = 0.2
+
+    await coord.async_request_refresh()
+    await hass.async_block_till_done()
+    data_before = coord.data
+
+    await coord._async_recompute_and_maybe_publish()
+    await hass.async_block_till_done()
+
+    assert coord.data is data_before
+    await coord.async_shutdown()
+
+
+async def test_heartbeat_publishes_when_source_goes_stale(hass: Any) -> None:
+    """A heartbeat that crosses the staleness threshold must publish."""
+    from custom_components.battery_lifetime.const import (
+        CONFIDENCE_STALE,
+        STALE_SOURCE_DAYS,
+    )
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    rec = coord.records["uid-foo"]
+    fresh_anchor = datetime.now(tz=UTC) - timedelta(days=70)
+    rec.replaced_on = fresh_anchor
+    rec.ewma.baseline_pct = 100.0
+    rec.ewma.baseline_at = fresh_anchor
+    rec.ewma.last_pct = 84.0
+    rec.ewma.last_at = fresh_anchor
+    rec.ewma.rate = 0.2
+    rec.last_reading_at = datetime.now(tz=UTC) - timedelta(hours=1)
+
+    await coord.async_request_refresh()
+    await hass.async_block_till_done()
+    assert coord.data["uid-foo"].prediction.confidence != CONFIDENCE_STALE
+
+    rec.last_reading_at = datetime.now(tz=UTC) - timedelta(
+        days=STALE_SOURCE_DAYS + 1
+    )
+    await coord._async_recompute_and_maybe_publish()
+    await hass.async_block_till_done()
+
+    assert coord.data["uid-foo"].prediction.confidence == CONFIDENCE_STALE
+    await coord.async_shutdown()
+
+
+async def test_user_action_setter_publishes_unconditionally(hass: Any) -> None:
+    """User-action setters route through the unconditional refresh path.
+
+    The heartbeat path (``_async_recompute_and_maybe_publish``) is diff-gated;
+    the setter path (``async_request_refresh`` → ``_async_update_data`` →
+    framework publish) is not, so the user always sees their toggle reflected
+    even when it leaves the four observable Prediction fields unchanged.
+    """
+    from unittest.mock import patch
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    rec = coord.records["uid-foo"]
+    rec.replaced_on = datetime.now(tz=UTC) - timedelta(days=70)
+    rec.ewma.baseline_pct = 100.0
+    rec.ewma.baseline_at = rec.replaced_on
+    rec.ewma.last_pct = 84.0
+    rec.ewma.last_at = rec.replaced_on
+    rec.ewma.rate = 0.2
+
+    with patch.object(
+        coord, "async_request_refresh", wraps=coord.async_request_refresh
+    ) as request_refresh:
+        await coord.set_tracking_enabled("uid-foo", rec.tracking_enabled)
+        assert request_refresh.call_count == 1
+    await coord.async_shutdown()
+
+
 async def test_source_without_unique_id_logged_and_skipped(
     hass: Any, caplog: pytest.LogCaptureFixture
 ) -> None:

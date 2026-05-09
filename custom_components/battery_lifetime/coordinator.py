@@ -134,7 +134,7 @@ class BatteryLifetimeCoordinator(
             hass,
             _LOGGER,
             name="battery_lifetime",
-            update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
+            update_interval=None,
         )
         self._store = store
         self._records: dict[str, BatteryRecord] = {}
@@ -346,15 +346,17 @@ class BatteryLifetimeCoordinator(
             new_at=ts,
             tracking_enabled=record.tracking_enabled,
         )
-        if not committed:
-            if record.tracking_enabled:
-                record.ewma = update_ewma(record.ewma, pct, ts)
-            record.last_reading_pct = pct
-            record.last_reading_at = ts
-            await self._maybe_backwards_extrapolate(record)
+        if committed:
+            return
+
+        if record.tracking_enabled:
+            record.ewma = update_ewma(record.ewma, pct, ts)
+        record.last_reading_pct = pct
+        record.last_reading_at = ts
+        await self._maybe_backwards_extrapolate(record)
 
         self._persist(record)
-        await self.async_request_refresh()
+        self._publish_single_record_update(unique_id, record)
 
     async def _maybe_backwards_extrapolate(
         self, record: BatteryRecord
@@ -516,22 +518,48 @@ class BatteryLifetimeCoordinator(
     @callback
     def _handle_tick(self, _now: datetime) -> None:
         self._store.prune_removed_older_than(REMOVED_SOURCE_RETENTION_DAYS)
-        self.hass.async_create_task(self.async_request_refresh())
+        self.hass.async_create_task(self._async_recompute_and_maybe_publish())
 
-    def _persist(self, record: BatteryRecord) -> None:
-        self._store.upsert_battery(
-            record.unique_id,
-            replaced_on=_isoformat_or_none(record.replaced_on),
-            profile=record.profile_id,
-            threshold_override=record.threshold_override,
-            tracking_enabled=record.tracking_enabled,
-            ewma_state=record.ewma.to_dict(),
-            last_reading_pct=record.last_reading_pct,
-            last_reading_at=_isoformat_or_none(record.last_reading_at),
-            last_replace_by=_isoformat_or_none(record.last_replace_by),
+    async def _async_recompute_and_maybe_publish(self) -> None:
+        """Heartbeat path: recompute every record and publish only if changed.
+
+        The unconditional publish path (``async_request_refresh``) is reserved
+        for explicit user actions and registry/detector callbacks; the periodic
+        heartbeat exists to surface time-driven flips (stale, confidence
+        ladder, summary cutoffs) without flooding listeners on idle systems.
+        """
+        new_snapshots = self._compute_snapshots()
+        if self.data is None or self._snapshots_differ(self.data, new_snapshots):
+            self.async_set_updated_data(new_snapshots)
+
+    def _publish_single_record_update(
+        self, unique_id: str, record: BatteryRecord
+    ) -> None:
+        """Per-source-event path: replace one record's snapshot, publish.
+
+        Other records' ``Prediction`` instances are carried forward by
+        reference so the publish is O(1) in the number of tracked batteries.
+        On the very first publish (``self.data is None``) we compute every
+        record so the snapshot dict is complete from the start.
+        """
+        if self.data is None:
+            self.async_set_updated_data(self._compute_snapshots())
+            return
+        snapshots = dict(self.data)
+        prediction = project_replace_by(
+            record.to_state(),
+            now=_utcnow(),
+            last_replace_by_fallback=record.last_replace_by,
         )
+        if prediction.replace_by is not None:
+            record.last_replace_by = prediction.replace_by
+            self._persist(record)
+        snapshots[unique_id] = CoordinatorSnapshot(
+            record=record, prediction=prediction
+        )
+        self.async_set_updated_data(snapshots)
 
-    async def _async_update_data(self) -> dict[str, CoordinatorSnapshot]:
+    def _compute_snapshots(self) -> dict[str, CoordinatorSnapshot]:
         snapshots: dict[str, CoordinatorSnapshot] = {}
         now = _utcnow()
         for unique_id, record in list(self._records.items()):
@@ -547,6 +575,42 @@ class BatteryLifetimeCoordinator(
                 record=record, prediction=prediction
             )
         return snapshots
+
+    @staticmethod
+    def _snapshots_differ(
+        old: dict[str, CoordinatorSnapshot],
+        new: dict[str, CoordinatorSnapshot],
+    ) -> bool:
+        if old.keys() != new.keys():
+            return True
+        for unique_id, new_snap in new.items():
+            old_snap = old[unique_id]
+            op = old_snap.prediction
+            np = new_snap.prediction
+            if (
+                op.replace_by != np.replace_by
+                or op.confidence != np.confidence
+                or op.drain_rate_pct_day != np.drain_rate_pct_day
+                or op.threshold_pct != np.threshold_pct
+            ):
+                return True
+        return False
+
+    def _persist(self, record: BatteryRecord) -> None:
+        self._store.upsert_battery(
+            record.unique_id,
+            replaced_on=_isoformat_or_none(record.replaced_on),
+            profile=record.profile_id,
+            threshold_override=record.threshold_override,
+            tracking_enabled=record.tracking_enabled,
+            ewma_state=record.ewma.to_dict(),
+            last_reading_pct=record.last_reading_pct,
+            last_reading_at=_isoformat_or_none(record.last_reading_at),
+            last_replace_by=_isoformat_or_none(record.last_replace_by),
+        )
+
+    async def _async_update_data(self) -> dict[str, CoordinatorSnapshot]:
+        return self._compute_snapshots()
 
     def iter_active_records(self) -> Iterable[BatteryRecord]:
         for record in self._records.values():
