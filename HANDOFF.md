@@ -1,12 +1,12 @@
 # Agent Handoff — Battery Lifetime
 
-## Current State (2026-05-09)
+## Current State (2026-05-11)
 
-The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.2** on GitHub via HACS.
+The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.3** on GitHub via HACS.
 
 The OpenSpec change `add-battery-lifetime` is at 56/62 tasks; the remaining six (10.2–10.7) are manual-validation gates against a real HA install. Some are implicitly being validated right now by the live install; see "What Needs Doing Next" below.
 
-The OpenSpec change `optimize-coordinator-tick` (v0.1.2 release) is fully archived under `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/`. Specs synced to `openspec/specs/coordinator-scheduling/spec.md`.
+The OpenSpec changes `optimize-coordinator-tick` (v0.1.2) and `defer-cold-start-backfill` (v0.1.3) are fully archived under `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/` and `openspec/changes/archive/2026-05-11-defer-cold-start-backfill/`. Both have their specs synced into `openspec/specs/coordinator-scheduling/spec.md`.
 
 ## What's Done
 
@@ -26,20 +26,19 @@ The OpenSpec change `optimize-coordinator-tick` (v0.1.2 release) is fully archiv
 - 107 unit tests passing under `pytest-homeassistant-custom-component`.
 - v0.1.0 released and installed live on the user's HA install. v0.1.1 follow-up adds a bold/all-caps setup-time warning to the config dialog and ships icon assets in `custom_components/battery_lifetime/brand/` (256×256 + 512×512).
 - v0.1.2 ships three coordinator scheduling optimizations (drop redundant 10-minute timer, per-source-event O(1) update via `async_set_updated_data`, diff-gated heartbeat publish). 5 new tests in `tests/test_coordinator.py`, full suite 112 passed.
-- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2` pushed to gitea (origin) and GitHub (github).
-- README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly. `coordinator-scheduling/spec.md` documents the per-event vs heartbeat contracts.
+- v0.1.3 defers cold-start backfill out of `async_setup`'s await chain via `hass.async_create_task`, removing the multi-minute config-entry freeze on installs with many batteries (the v0.1.1 dialog warning is no longer applicable and was softened). Adds a one-shot `persistent_notification` (`battery_lifetime_cold_start_complete`) when the initial backfill batch finishes. Ships `brand/logo.png` + `brand/logo@2x.png` (copies of the icon assets) for HA's Brands Proxy logo slot. 3 new tests in `tests/test_coordinator.py`, full suite 115 passed.
+- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2`/`v0.1.3` pushed to gitea (origin) and GitHub (github).
+- README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly. `coordinator-scheduling/spec.md` documents the per-event vs heartbeat contracts AND the non-blocking cold-start contract.
 
 ## What Needs Doing Next (Immediate)
 
 ### 1. ~~Brands PR for the HACS icon~~ — OBSOLETE as of HA 2026.3
 
-Home Assistant 2026.3 (announcement: <https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api>) introduced a local Brands Proxy API. Custom integrations now ship `brand/icon.png`, `brand/icon@2x.png` (and optionally `logo.png` / `dark_*.png`) inside their own repository, and HA serves them from `/api/brands/integration/<domain>/icon.png`. The `home-assistant/brands` repo **auto-closes** PRs for `custom_integrations/*` and tells contributors to use the inline mechanism (verified via closed PRs `home-assistant/brands#10149` and `#10230` cited in `hacs/integration#5223`).
+Home Assistant 2026.3 (announcement: <https://developers.home-assistant.io/blog/2026/02/24/brands-proxy-api>) introduced a local Brands Proxy API. Custom integrations now ship `brand/icon.png`, `brand/icon@2x.png`, `brand/logo.png`, and `brand/logo@2x.png` inside their own repository, and HA serves them from `/api/brands/integration/<domain>/...`. The `home-assistant/brands` repo **auto-closes** PRs for `custom_integrations/*` and tells contributors to use the inline mechanism.
 
-We already ship `custom_components/battery_lifetime/brand/icon.png` (256×256) and `icon@2x.png` (512×512), so on the user's HA 2026.4.x install the icon is already served by HA core in **Settings → Devices & Services**, the integration card, and the config-flow dialog. **No PR needed.**
+We ship all four assets as of v0.1.3 (icons in v0.1.1, logos added in v0.1.3 as copies of the icons). On the user's HA 2026.4.x install the icon and logo are served by HA core in **Settings → Devices & Services**, the integration card, and the config-flow dialog. **No PR needed.**
 
 The one remaining gap is HACS's own dashboard (Downloads / repository list), which still calls the old CDN URL because `hacs/frontend` hasn't been bumped past the brands-proxy rewrite. Tracked in `hacs/integration#5179` and `#5223`; fix PRs `hacs/integration#5228`, `hacs/frontend#937`, `#929`, `#5249` are open but unmerged. Until HACS frontend ships those, the HACS Downloads panel will keep showing "icon not available". This is a HACS issue, not ours.
-
-Optional polish: add `brand/logo.png` and `brand/logo@2x.png` (same image as icon is fine for an icon-only brand) so that places consuming the logo asset get something instead of the placeholder.
 
 ### 2. OpenSpec manual-validation gates 10.2 – 10.7
 
@@ -54,14 +53,13 @@ These are the only remaining tasks in `openspec/changes/add-battery-lifetime/tas
 
 Once 10.2 – 10.5 are observed in the live install, mark them in `tasks.md` and run `openspec archive --change "add-battery-lifetime"` (the OpenSpec workflow). The change has `isComplete: true` per `openspec status` (all artifacts are done; the open task checkboxes don't block archive).
 
-### 3. Investigate the multi-minute initial-setup freeze
+### 3. ~~Investigate the multi-minute initial-setup freeze~~ — FIXED in v0.1.3
 
-User reported that pressing **Submit** on the config dialog locked the UI for several minutes on a 70-device / 554-entity install. v0.1.1 warns about this in the dialog, but the underlying cause should be confirmed before considering it acceptable. Likely culprits:
+v0.1.3 ships the cold-start defer: `_ensure_record` schedules `_attempt_cold_start_backfill` via `hass.async_create_task` instead of awaiting it, so `async_setup` returns within the time bounded by the entity-registry scan (sub-second on the user's install). The coordinator tracks in-flight backfills in `_pending_backfills: set[str]` and fires one persistent notification (`battery_lifetime_cold_start_complete`) when the set drains.
 
-- `_scan_initial_entities` in `custom_components/battery_lifetime/coordinator.py` calls `_ensure_record` for every eligible entity sequentially, and each call awaits the cold-start backfill (`_attempt_cold_start_backfill` → `recorder.async_add_executor_job` → two recorder queries per battery). With 70 batteries that's 140 recorder queries serialized.
-- Mitigations to consider: gate cold-start backfill behind a background task instead of blocking setup; batch the recorder queries via `recorder.history.get_significant_states` for all entity_ids at once; or just defer the backfill to the first scheduled coordinator tick (already 10 minutes after setup) and let setup return immediately.
-- Lazy-import note: cold-start should not block any of the *other* setup steps — the entity platforms are forwarded after `coordinator.async_setup()` returns. So the freeze is squarely in `_scan_initial_entities`.
-- v0.1.2 did NOT touch this. The coordinator-tick optimization is downstream of setup; the freeze is upstream. Still open.
+The dialog warning was softened from the bold/all-caps freeze warning to a calmer "background backfill may take several minutes; a notification will appear when complete" note in `strings.json` and `translations/en.json`.
+
+**Worth observing on the live install after upgrade:** confirm that (a) re-adding the integration completes within seconds rather than minutes; (b) the `battery_lifetime_cold_start_complete` notification appears once the background backfill finishes; (c) the per-battery `replaced_on` values populate over the following minutes; (d) no regressions in the 70 → 554 entity registration.
 
 ### 4. Loose ends from earlier sessions
 
@@ -160,3 +158,4 @@ Ready to archive once 10.2 – 10.5 are observed live and the boxes are checked.
 ### Archived changes
 
 - `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/` — v0.1.2 release. Synced spec `coordinator-scheduling` is at `openspec/specs/coordinator-scheduling/spec.md`.
+- `openspec/changes/archive/2026-05-11-defer-cold-start-backfill/` — v0.1.3 release. Same target spec; adds two requirements (Cold-start backfill is non-blocking; Backfill batch completion is announced exactly once).
