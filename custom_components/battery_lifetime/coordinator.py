@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from homeassistant.components import persistent_notification
 from homeassistant.const import EVENT_STATE_CHANGED
 from homeassistant.core import (
     CALLBACK_TYPE,
@@ -145,6 +146,7 @@ class BatteryLifetimeCoordinator(
         self._detector = ReplacementDetector(hass, self._apply_commit)
         self._backfiller = ColdStartBackfiller(hass)
         self._known_entities: set[str] = set()
+        self._pending_backfills: set[str] = set()
 
     @property
     def store(self) -> BatteryLifetimeStore:
@@ -244,9 +246,44 @@ class BatteryLifetimeCoordinator(
 
         if not record.backfill_attempted:
             record.backfill_attempted = True
-            await self._attempt_cold_start_backfill(record)
+            if record.replaced_on is None:
+                self._pending_backfills.add(unique_id)
+                self.hass.async_create_task(
+                    self._run_backfill_with_tracking(record),
+                    name=f"battery_lifetime_cold_start_{unique_id}",
+                )
 
         return record
+
+    async def _run_backfill_with_tracking(
+        self, record: BatteryRecord
+    ) -> None:
+        """Run cold-start backfill and announce completion of the batch.
+
+        Cold-start backfill is dispatched as a background task per record so
+        it never blocks ``async_setup``. ``_pending_backfills`` is the
+        single source of truth for "is the initial backfill phase still
+        running"; when the last task removes its ``unique_id`` the user
+        gets one persistent notification.
+        """
+        try:
+            await self._attempt_cold_start_backfill(record)
+        finally:
+            self._pending_backfills.discard(record.unique_id)
+            if not self._pending_backfills:
+                self._announce_backfill_complete()
+
+    def _announce_backfill_complete(self) -> None:
+        persistent_notification.async_create(
+            self.hass,
+            (
+                "Battery Lifetime has finished its initial cold-start "
+                "backfill. Per-battery 'Replaced on' values inferred from "
+                "long-term statistics are now populated."
+            ),
+            title="Battery Lifetime: backfill complete",
+            notification_id="battery_lifetime_cold_start_complete",
+        )
 
     async def _attempt_cold_start_backfill(
         self, record: BatteryRecord
