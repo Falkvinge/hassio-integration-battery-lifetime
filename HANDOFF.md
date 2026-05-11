@@ -1,12 +1,12 @@
 # Agent Handoff — Battery Lifetime
 
-## Current State (2026-05-11)
+## Current State (2026-05-11, late-morning)
 
-The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.3** on GitHub via HACS.
+The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.4** on GitHub via HACS.
 
 The OpenSpec change `add-battery-lifetime` is at 56/62 tasks; the remaining six (10.2–10.7) are manual-validation gates against a real HA install. Some are implicitly being validated right now by the live install; see "What Needs Doing Next" below.
 
-The OpenSpec changes `optimize-coordinator-tick` (v0.1.2) and `defer-cold-start-backfill` (v0.1.3) are fully archived under `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/` and `openspec/changes/archive/2026-05-11-defer-cold-start-backfill/`. Both have their specs synced into `openspec/specs/coordinator-scheduling/spec.md`.
+The OpenSpec changes `optimize-coordinator-tick` (v0.1.2), `defer-cold-start-backfill` (v0.1.3), and `autoclean-orphan-companion-entities` (v0.1.4) are fully archived under `openspec/changes/archive/`. All three have their specs synced into `openspec/specs/coordinator-scheduling/spec.md`.
 
 ## What's Done
 
@@ -27,8 +27,9 @@ The OpenSpec changes `optimize-coordinator-tick` (v0.1.2) and `defer-cold-start-
 - v0.1.0 released and installed live on the user's HA install. v0.1.1 follow-up adds a bold/all-caps setup-time warning to the config dialog and ships icon assets in `custom_components/battery_lifetime/brand/` (256×256 + 512×512).
 - v0.1.2 ships three coordinator scheduling optimizations (drop redundant 10-minute timer, per-source-event O(1) update via `async_set_updated_data`, diff-gated heartbeat publish). 5 new tests in `tests/test_coordinator.py`, full suite 112 passed.
 - v0.1.3 defers cold-start backfill out of `async_setup`'s await chain via `hass.async_create_task`, removing the multi-minute config-entry freeze on installs with many batteries (the v0.1.1 dialog warning is no longer applicable and was softened). Adds a one-shot `persistent_notification` (`battery_lifetime_cold_start_complete`) when the initial backfill batch finishes. Ships `brand/logo.png` + `brand/logo@2x.png` (copies of the icon assets) for HA's Brands Proxy logo slot. 3 new tests in `tests/test_coordinator.py`, full suite 115 passed.
-- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2`/`v0.1.3` pushed to gitea (origin) and GitHub (github).
-- README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly. `coordinator-scheduling/spec.md` documents the per-event vs heartbeat contracts AND the non-blocking cold-start contract.
+- v0.1.4 closes the orphan-companion-entity gap: when `prune_removed_older_than` actually drops a `unique_id` from the JSON store (after the 30-day grace window), the coordinator now removes the per-source companion device via `device_registry.async_remove_device`. HA's device-registry removal cascades to the entity registry and clears the eight per-source companion entries automatically. Cleanup runs from both prune call sites (`_async_registry_changed action: remove` + `_handle_tick`). Idempotent on missing device. Soft-deleted entries within their grace window are NOT touched; restore semantics are unchanged. 3 new tests, full suite 118 passed.
+- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2`/`v0.1.3`/`v0.1.4` pushed to gitea (origin) and GitHub (github).
+- README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly. `coordinator-scheduling/spec.md` documents the per-event vs heartbeat contracts, the non-blocking cold-start contract, AND the prune-driven companion-device purge.
 
 ## What Needs Doing Next (Immediate)
 
@@ -61,7 +62,13 @@ The dialog warning was softened from the bold/all-caps freeze warning to a calme
 
 **Worth observing on the live install after upgrade:** confirm that (a) re-adding the integration completes within seconds rather than minutes; (b) the `battery_lifetime_cold_start_complete` notification appears once the background backfill finishes; (c) the per-battery `replaced_on` values populate over the following minutes; (d) no regressions in the 70 → 554 entity registration.
 
-### 4. Loose ends from earlier sessions
+### 4. ~~Orphan companion entities after permanent removal~~ — FIXED in v0.1.4
+
+v0.1.4 hooks the device-registry purge into the existing prune path. When `prune_removed_older_than` returns a non-empty list (which only happens after the 30-day grace window has expired for a soft-deleted source), the coordinator looks up the matching companion device via `device_registry.async_get_device(identifiers={(DOMAIN, source_uid)})` and calls `async_remove_device`, which cascades to all eight companion entity-registry entries.
+
+**Pre-existing orphans accumulated before v0.1.4 are NOT retroactively cleaned.** Their JSON-store entries are already gone (so the prune-driven purge has nothing to act on for them). User can manually delete via Settings → Devices & Services. If accumulated orphans become a real pain point on the live install, a one-shot legacy-orphan scanner could be added in a future release; deferred until asked.
+
+### 5. Loose ends from earlier sessions
 
 - **Branch tracking.** `master` currently tracks `github/master` (because of `git push -u github master`). Sibling repos track `origin/master`. To match the sibling pattern:
   ```bash
@@ -159,3 +166,4 @@ Ready to archive once 10.2 – 10.5 are observed live and the boxes are checked.
 
 - `openspec/changes/archive/2026-05-09-optimize-coordinator-tick/` — v0.1.2 release. Synced spec `coordinator-scheduling` is at `openspec/specs/coordinator-scheduling/spec.md`.
 - `openspec/changes/archive/2026-05-11-defer-cold-start-backfill/` — v0.1.3 release. Same target spec; adds two requirements (Cold-start backfill is non-blocking; Backfill batch completion is announced exactly once).
+- `openspec/changes/archive/2026-05-11-autoclean-orphan-companion-entities/` — v0.1.4 release. Same target spec; adds one requirement (Pruned sources have their companion device removed).
