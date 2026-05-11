@@ -186,6 +186,15 @@ functional throughout, and a one-time persistent notification ("Battery
 Lifetime: backfill complete") appears when the initial backfill batch is
 done.
 
+## When a battery disappears
+
+When a source battery is removed from Home Assistant (device deleted, Zigbee2MQTT un-paired, integration uninstalled), the integration:
+
+1. Drops the in-memory state immediately. The eight companion entities flip to `unavailable` in the UI.
+2. **Soft-deletes** the persistent state in `.storage/battery_lifetime` — `replaced_on`, profile, threshold override, and EWMA state are kept against the chance of restore. The entry is stamped with a `removed_at` timestamp.
+3. If the same `unique_id` reappears within 30 days (e.g. you re-pair the device), the prior state is restored and the companion entities resume automatically — no UI rebuild, your `replaced_on` is preserved.
+4. After 30 days, the soft-deleted store entry is pruned, and the companion **device card plus all eight companion entities are removed** from Home Assistant's registry. No orphan `unavailable` rows linger.
+
 ## The forward-prediction service
 
 ```yaml

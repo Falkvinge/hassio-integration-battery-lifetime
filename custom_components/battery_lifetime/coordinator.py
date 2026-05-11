@@ -28,7 +28,7 @@ from homeassistant.core import (
     HomeAssistant,
     callback,
 )
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
@@ -285,6 +285,30 @@ class BatteryLifetimeCoordinator(
             notification_id="battery_lifetime_cold_start_complete",
         )
 
+    def _purge_companions_for_pruned(self, unique_ids: list[str]) -> None:
+        """Remove the companion device for each pruned source.
+
+        HA's device-registry removal cascades to the entity registry and
+        drops every entry tied to the device, which on the Battery Lifetime
+        device card is exactly the eight per-source companion entries.
+        Idempotent: a missing device is a silent no-op.
+        """
+        if not unique_ids:
+            return
+        device_registry = dr.async_get(self.hass)
+        for source_uid in unique_ids:
+            device = device_registry.async_get_device(
+                identifiers={(DOMAIN, source_uid)}
+            )
+            if device is None:
+                continue
+            device_registry.async_remove_device(device.id)
+            _LOGGER.info(
+                "battery_lifetime: removed orphan companion device for "
+                "pruned source %s",
+                source_uid,
+            )
+
     async def _attempt_cold_start_backfill(
         self, record: BatteryRecord
     ) -> None:
@@ -333,7 +357,10 @@ class BatteryLifetimeCoordinator(
                 record = self._records.pop(unique_id, None)
                 if record is not None:
                     record.tracking_enabled = False
-            self._store.prune_removed_older_than(REMOVED_SOURCE_RETENTION_DAYS)
+            pruned = self._store.prune_removed_older_than(
+                REMOVED_SOURCE_RETENTION_DAYS
+            )
+            self._purge_companions_for_pruned(pruned)
             return
         registry = er.async_get(self.hass)
         entry = registry.async_get(entity_id)
@@ -554,7 +581,10 @@ class BatteryLifetimeCoordinator(
 
     @callback
     def _handle_tick(self, _now: datetime) -> None:
-        self._store.prune_removed_older_than(REMOVED_SOURCE_RETENTION_DAYS)
+        pruned = self._store.prune_removed_older_than(
+            REMOVED_SOURCE_RETENTION_DAYS
+        )
+        self._purge_companions_for_pruned(pruned)
         self.hass.async_create_task(self._async_recompute_and_maybe_publish())
 
     async def _async_recompute_and_maybe_publish(self) -> None:

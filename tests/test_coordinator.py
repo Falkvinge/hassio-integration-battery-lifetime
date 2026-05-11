@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import PERCENTAGE
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from custom_components.battery_lifetime.const import DOMAIN
 from custom_components.battery_lifetime.coordinator import (
@@ -539,6 +539,116 @@ async def test_no_pending_backfill_no_notification(hass: Any) -> None:
     notifications = _async_get_or_create_notifications(hass)
     assert "battery_lifetime_cold_start_complete" not in notifications
     assert coord._pending_backfills == set()
+    await coord.async_shutdown()
+
+
+async def test_purge_companions_for_pruned_removes_device(hass: Any) -> None:
+    """A pruned source's companion device is removed from the device registry."""
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN)
+    entry.add_to_hass(hass)
+    device_registry = dr.async_get(hass)
+    device = device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "uid-foo")},
+        manufacturer="Battery Lifetime",
+        name="Battery: sensor.foo_battery",
+    )
+    assert (
+        device_registry.async_get_device(identifiers={(DOMAIN, "uid-foo")})
+        is not None
+    )
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    coord._purge_companions_for_pruned(["uid-foo"])
+    await hass.async_block_till_done()
+
+    assert (
+        device_registry.async_get_device(identifiers={(DOMAIN, "uid-foo")})
+        is None
+    )
+    await coord.async_shutdown()
+
+
+async def test_purge_companions_for_pruned_is_noop_for_missing_device(
+    hass: Any,
+) -> None:
+    """Purging a unique_id with no device entry is a silent no-op."""
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+
+    coord._purge_companions_for_pruned(["uid-never-existed"])
+    coord._purge_companions_for_pruned([])
+    await hass.async_block_till_done()
+    await coord.async_shutdown()
+
+
+async def test_remove_event_chain_purges_after_grace_window(hass: Any) -> None:
+    """Once the 30-day grace elapses, the next prune drives a device purge.
+
+    Exercises the full _async_registry_changed -> store.prune -> purge chain
+    by forging an old removed_at directly so prune actually removes the
+    entry (without waiting 30 days of wall clock).
+    """
+    import time as _time
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.battery_lifetime.const import (
+        REMOVED_SOURCE_RETENTION_DAYS,
+    )
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=DOMAIN)
+    entry.add_to_hass(hass)
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    device_registry = dr.async_get(hass)
+    device_registry.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={(DOMAIN, "uid-foo")},
+        manufacturer="Battery Lifetime",
+        name="Battery: sensor.foo_battery",
+    )
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    await hass.async_block_till_done()
+    assert "uid-foo" in coord.records
+
+    hass.bus.async_fire(
+        "entity_registry_updated",
+        {"action": "remove", "entity_id": "sensor.foo_battery"},
+    )
+    await hass.async_block_till_done()
+    assert "uid-foo" not in coord.records
+    stored = store.get_battery("uid-foo")
+    assert stored is not None
+    assert stored.get("removed_at") is not None
+    assert (
+        device_registry.async_get_device(identifiers={(DOMAIN, "uid-foo")})
+        is not None
+    )
+
+    store._data["batteries"]["uid-foo"]["removed_at"] = (
+        _time.time() - (REMOVED_SOURCE_RETENTION_DAYS + 1) * 86400
+    )
+
+    coord._handle_tick(datetime.now(tz=UTC))
+    await hass.async_block_till_done()
+
+    assert store.get_battery("uid-foo") is None
+    assert (
+        device_registry.async_get_device(identifiers={(DOMAIN, "uid-foo")})
+        is None
+    )
     await coord.async_shutdown()
 
 
