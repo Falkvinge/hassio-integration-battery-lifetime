@@ -452,6 +452,96 @@ async def test_user_action_setter_publishes_unconditionally(hass: Any) -> None:
     await coord.async_shutdown()
 
 
+async def test_setup_does_not_await_cold_start_backfill(hass: Any) -> None:
+    """async_setup must return before per-record cold-start backfill completes.
+
+    The freeze fixed by v0.1.3: with N batteries needing cold-start backfill,
+    pre-fix `_scan_initial_entities` awaited each backfill in series, so HA's
+    config-entry setup blocked for minutes. Post-fix, backfill is scheduled
+    via `hass.async_create_task` and `async_setup` returns immediately.
+    """
+    import asyncio
+    from unittest.mock import patch
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+
+    backfill_started = asyncio.Event()
+    release_backfill = asyncio.Event()
+
+    async def _slow_backfill(record: Any) -> None:
+        backfill_started.set()
+        await release_backfill.wait()
+
+    with patch.object(
+        coord, "_attempt_cold_start_backfill", side_effect=_slow_backfill
+    ):
+        await coord.async_setup()
+        # async_setup has returned. The backfill task may have started (event
+        # loop tick) but MUST not yet have completed, since we haven't
+        # released the gate.
+        assert "uid-foo" in coord._pending_backfills
+        assert backfill_started.is_set()
+
+        release_backfill.set()
+        await hass.async_block_till_done()
+        assert coord._pending_backfills == set()
+
+    await coord.async_shutdown()
+
+
+async def test_cold_start_completion_fires_notification(hass: Any) -> None:
+    """Once the last in-flight backfill finishes, exactly one notification fires."""
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    await hass.async_block_till_done()
+
+    notifications = _async_get_or_create_notifications(hass)
+    assert "battery_lifetime_cold_start_complete" in notifications
+    assert coord._pending_backfills == set()
+    await coord.async_shutdown()
+
+
+async def test_no_pending_backfill_no_notification(hass: Any) -> None:
+    """If every record has a persisted replaced_on, no backfill task is scheduled."""
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    store.upsert_battery("uid-foo", replaced_on="2026-04-01T00:00:00+00:00")
+    await store.async_save()
+
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    await hass.async_block_till_done()
+
+    notifications = _async_get_or_create_notifications(hass)
+    assert "battery_lifetime_cold_start_complete" not in notifications
+    assert coord._pending_backfills == set()
+    await coord.async_shutdown()
+
+
 async def test_source_without_unique_id_logged_and_skipped(
     hass: Any, caplog: pytest.LogCaptureFixture
 ) -> None:

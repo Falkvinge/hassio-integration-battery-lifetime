@@ -178,6 +178,14 @@ When a battery is first seen by the integration:
    accumulate, it extrapolates backwards along the active profile to estimate
    `replaced_on` and updates accordingly.
 
+The cold-start scan runs in the background after the integration finishes
+setting up, so the **Settings → Devices & Services** dialog returns within
+seconds even on installs with many batteries. On a 70-battery install the
+background scan can take several minutes; the integration is fully
+functional throughout, and a one-time persistent notification ("Battery
+Lifetime: backfill complete") appears when the initial backfill batch is
+done.
+
 ## The forward-prediction service
 
 ```yaml
