@@ -242,4 +242,4 @@ The integration **does not** model:
 
 ## License
 
-MIT. See `LICENSE`.
+This project was AI-generated. Human involvement did not meet the bar for substantial originality required for copyright protection. This work is in the public domain where applicable, or otherwise not subject to copyright protection.
