@@ -72,11 +72,16 @@ For every tracked battery `sensor.foo_battery`, the integration creates:
 | `date.foo_battery_replaced_on`            | date            | Manual override of replaced-on. Future dates rejected.       |
 | `button.foo_battery_mark_replaced`        | button          | Sets `replaced_on` to now and resets the model.              |
 | `number.foo_battery_threshold_override`   | number          | Optional `%` override. Blank means "use profile default."    |
+| `binary_sensor.foo_battery_due_next_quarter` | binary       | `on` when `replace_by` falls on or before the next quarter end |
 
-And two integration-level summary sensors:
+The `replace_by` sensor also exposes a `days_until_replace` attribute (signed
+integer days; negative when overdue) when a prediction exists.
+
+And three integration-level summary sensors:
 
 - `sensor.battery_lifetime_due_this_month`
 - `sensor.battery_lifetime_due_next_3_months`
+- `sensor.battery_lifetime_due_next_quarter` (includes a `next_quarter_end` attribute)
 
 ## Replacement detection
 
@@ -190,10 +195,10 @@ done.
 
 When a source battery is removed from Home Assistant (device deleted, Zigbee2MQTT un-paired, integration uninstalled), the integration:
 
-1. Drops the in-memory state immediately. The eight companion entities flip to `unavailable` in the UI.
+1. Drops the in-memory state immediately. The nine companion entities flip to `unavailable` in the UI.
 2. **Soft-deletes** the persistent state in `.storage/battery_lifetime` — `replaced_on`, profile, threshold override, and EWMA state are kept against the chance of restore. The entry is stamped with a `removed_at` timestamp.
 3. If the same `unique_id` reappears within 30 days (e.g. you re-pair the device), the prior state is restored and the companion entities resume automatically — no UI rebuild, your `replaced_on` is preserved.
-4. After 30 days, the soft-deleted store entry is pruned, and the companion **device card plus all eight companion entities are removed** from Home Assistant's registry. No orphan `unavailable` rows linger.
+4. After 30 days, the soft-deleted store entry is pruned, and the companion **device card plus all nine companion entities are removed** from Home Assistant's registry. No orphan `unavailable` rows linger.
 
 ## The forward-prediction service
 

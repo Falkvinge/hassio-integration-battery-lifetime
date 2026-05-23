@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Final
 
 DOMAIN: Final = "battery_lifetime"
-PLATFORMS: Final = ["sensor", "switch", "button", "date", "number"]
+PLATFORMS: Final = ["sensor", "binary_sensor", "switch", "button", "date", "number"]
 
 STORAGE_KEY: Final = "battery_lifetime"
 STORAGE_VERSION: Final = 1
