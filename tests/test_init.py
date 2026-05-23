@@ -53,8 +53,10 @@ async def test_async_setup_entry_creates_companion_entities(hass: Any) -> None:
     assert "button.foo_battery_mark_replaced" in states
     assert "date.foo_battery_replaced_on" in states
     assert "number.foo_battery_threshold_override" in states
+    assert "binary_sensor.foo_battery_due_next_quarter" in states
     assert "sensor.battery_lifetime_due_this_month" in states
     assert "sensor.battery_lifetime_due_next_3_months" in states
+    assert "sensor.battery_lifetime_due_next_quarter" in states
     assert hass.services.has_service(DOMAIN, SERVICE_PREDICT_AT)
 
     assert await hass.config_entries.async_unload(entry.entry_id)

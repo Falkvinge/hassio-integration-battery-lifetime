@@ -10,6 +10,7 @@ from homeassistant.components.sensor import SensorDeviceClass
 from homeassistant.const import PERCENTAGE
 from homeassistant.helpers import entity_registry as er
 
+from custom_components.battery_lifetime.binary_sensor import DueNextQuarterBinarySensor
 from custom_components.battery_lifetime.button import MarkReplacedButton
 from custom_components.battery_lifetime.coordinator import (
     BatteryLifetimeCoordinator,
@@ -20,6 +21,7 @@ from custom_components.battery_lifetime.number import ThresholdOverrideNumber
 from custom_components.battery_lifetime.sensor import (
     DrainRateSensor,
     DueNext3MonthsSensor,
+    DueNextQuarterSensor,
     PredictionQualitySensor,
     ReplaceBySensor,
 )
@@ -79,6 +81,8 @@ async def test_replace_by_sensor_returns_prediction(
     attrs = sensor.extra_state_attributes
     assert attrs["source_entity"] == "sensor.foo_battery"
     assert attrs["confidence"] in ("low", "medium", "high")
+    assert "days_until_replace" in attrs
+    assert isinstance(attrs["days_until_replace"], int)
 
 
 async def test_prediction_quality_sensor_returns_string(
@@ -136,6 +140,50 @@ async def test_summary_sensors_exclude_disabled_batteries(
     coord_with_battery.data = await coord_with_battery._async_update_data()
     assert due_this.native_value == 0
     assert due_next.native_value == 0
+
+
+async def test_summary_sensor_counts_due_next_quarter(
+    coord_with_battery: BatteryLifetimeCoordinator,
+) -> None:
+    record = coord_with_battery.records["uid-foo"]
+    record.last_reading_pct = 18.0
+    record.ewma.last_pct = 18.0
+    record.ewma.last_at = datetime.now(tz=UTC)
+    record.last_reading_at = record.ewma.last_at
+    record.ewma.rate = 1.0
+    coord_with_battery.data = await coord_with_battery._async_update_data()
+    sensor = DueNextQuarterSensor(coord_with_battery)
+    assert sensor.native_value == 1
+    assert "next_quarter_end" in sensor.extra_state_attributes
+
+
+async def test_due_next_quarter_binary_sensor(
+    coord_with_battery: BatteryLifetimeCoordinator,
+) -> None:
+    record = coord_with_battery.records["uid-foo"]
+    record.last_reading_pct = 18.0
+    record.ewma.last_pct = 18.0
+    record.ewma.last_at = datetime.now(tz=UTC)
+    record.last_reading_at = record.ewma.last_at
+    record.ewma.rate = 1.0
+    coord_with_battery.data = await coord_with_battery._async_update_data()
+    binary = DueNextQuarterBinarySensor(coord_with_battery, "uid-foo")
+    assert binary.is_on is True
+
+    record.tracking_enabled = False
+    coord_with_battery.data = await coord_with_battery._async_update_data()
+    assert binary.is_on is False
+
+
+async def test_replace_by_omits_days_until_for_no_data(
+    coord_with_battery: BatteryLifetimeCoordinator,
+) -> None:
+    record = coord_with_battery.records["uid-foo"]
+    record.replaced_on = None
+    record.ewma.rate = None
+    coord_with_battery.data = await coord_with_battery._async_update_data()
+    sensor = ReplaceBySensor(coord_with_battery, "uid-foo")
+    assert "days_until_replace" not in sensor.extra_state_attributes
 
 
 async def test_profile_switch_toggles_profile(

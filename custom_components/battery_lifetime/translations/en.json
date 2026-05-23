@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Set up Battery Lifetime",
-        "description": "Battery Lifetime auto-discovers every numeric percent battery sensor in Home Assistant and creates around eight companion entities per battery (replace-by, drain rate, profile, threshold, etc.).\n\nSetup itself completes within seconds. Once setup finishes, a one-time cold-start backfill runs in the background, scanning long-term statistics for each battery's most recent replacement to seed the 'Replaced on' date. On installs with many batteries (50+) this background scan can take several minutes \u2014 the integration is fully functional throughout, and a persistent notification will appear when the backfill finishes.\n\nYou can opt out individual batteries from the integration's options afterwards. Press Submit to continue."
+        "description": "Battery Lifetime auto-discovers every numeric percent battery sensor in Home Assistant and creates around nine companion entities per battery (replace-by, drain rate, profile, threshold, etc.).\n\nSetup itself completes within seconds. Once setup finishes, a one-time cold-start backfill runs in the background, scanning long-term statistics for each battery's most recent replacement to seed the 'Replaced on' date. On installs with many batteries (50+) this background scan can take several minutes \u2014 the integration is fully functional throughout, and a persistent notification will appear when the backfill finishes.\n\nYou can opt out individual batteries from the integration's options afterwards. Press Submit to continue."
       }
     },
     "abort": {
@@ -79,6 +79,14 @@
       },
       "due_next_3_months": {
         "name": "Due in next 3 months"
+      },
+      "due_next_quarter": {
+        "name": "Due next quarter"
+      }
+    },
+    "binary_sensor": {
+      "due_next_quarter": {
+        "name": "Due next quarter"
       }
     },
     "switch": {

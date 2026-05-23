@@ -290,7 +290,7 @@ class BatteryLifetimeCoordinator(
 
         HA's device-registry removal cascades to the entity registry and
         drops every entry tied to the device, which on the Battery Lifetime
-        device card is exactly the eight per-source companion entries.
+        device card is exactly the nine per-source companion entries.
         Idempotent: a missing device is a silent no-op.
         """
         if not unique_ids:

@@ -16,10 +16,12 @@ from .const import (
     CONFIDENCE_LOW,
     CONFIDENCE_MEDIUM,
     CONFIDENCE_HIGH,
+    CONFIDENCE_NO_DATA,
     DOMAIN,
 )
 from .coordinator import BatteryLifetimeCoordinator
 from .entity import BatteryCompanionEntity, companion_unique_id
+from .quarters import days_until_replace, is_due_by_quarter_end, next_quarter_end
 
 UTC = timezone.utc
 
@@ -29,6 +31,7 @@ _DRAIN_RATE_SUFFIX = "drain_rate"
 
 _DUE_THIS_MONTH_UNIQUE = "battery_lifetime:summary:due_this_month"
 _DUE_NEXT_3_MONTHS_UNIQUE = "battery_lifetime:summary:due_next_3_months"
+_DUE_NEXT_QUARTER_UNIQUE = "battery_lifetime:summary:due_next_quarter"
 
 
 async def async_setup_entry(
@@ -54,6 +57,7 @@ async def async_setup_entry(
         initial.extend(_add_for_record(unique_id))
     initial.append(DueThisMonthSensor(coordinator))
     initial.append(DueNext3MonthsSensor(coordinator))
+    initial.append(DueNextQuarterSensor(coordinator))
     async_add_entities(initial)
 
     seen: set[str] = set(coordinator.records)
@@ -122,6 +126,21 @@ class ReplaceBySensor(_PerBatterySensor):
         if snapshot is None:
             return None
         return snapshot.prediction.replace_by
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        attrs = super().extra_state_attributes
+        snapshot = (self.coordinator.data or {}).get(self._source_unique_id)
+        if snapshot is None:
+            return attrs
+        if snapshot.prediction.confidence == CONFIDENCE_NO_DATA:
+            return attrs
+        replace_by = snapshot.prediction.replace_by
+        remaining = days_until_replace(replace_by)
+        if remaining is not None:
+            attrs = dict(attrs)
+            attrs["days_until_replace"] = remaining
+        return attrs
 
 
 class PredictionQualitySensor(_PerBatterySensor):
@@ -254,6 +273,37 @@ class DueNext3MonthsSensor(_SummarySensor):
             if replace_by is not None and replace_by <= cutoff:
                 count += 1
         return count
+
+
+class DueNextQuarterSensor(_SummarySensor):
+    def __init__(self, coordinator: BatteryLifetimeCoordinator) -> None:
+        super().__init__(
+            coordinator,
+            unique_id=_DUE_NEXT_QUARTER_UNIQUE,
+            translation_key="due_next_quarter",
+            name="Due next quarter",
+            object_id="battery_lifetime_due_next_quarter",
+        )
+
+    @property
+    def native_value(self) -> int:
+        snapshots = self.coordinator.data or {}
+        cutoff = next_quarter_end()
+        count = 0
+        for snap in snapshots.values():
+            if not snap.record.tracking_enabled:
+                continue
+            if snap.prediction.confidence == CONFIDENCE_NO_DATA:
+                continue
+            replace_by = snap.prediction.replace_by
+            if replace_by is not None and replace_by <= cutoff:
+                count += 1
+        return count
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        cutoff = next_quarter_end()
+        return {"next_quarter_end": cutoff.isoformat()}
 
 
 def _last_day_of_month(now: datetime) -> datetime:

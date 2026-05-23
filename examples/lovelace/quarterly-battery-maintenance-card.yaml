@@ -1,0 +1,90 @@
+# Quarterly battery maintenance card
+#
+# Uses Battery Lifetime integration companions:
+#   - binary_sensor.*_due_next_quarter (inclusion gate)
+#   - sensor.battery_lifetime_due_next_quarter (header count)
+#   - sensor.*_replace_by (row display: days_until_replace, last_observed_pct, …)
+#
+# Requires (HACS): auto-entities, template-entity-row
+#
+# Visible days 1–10 of March, June, September, December. Remove the outer
+# conditional wrapper to preview at any time.
+
+type: conditional
+conditions:
+  - condition: template
+    value_template: >
+      {{ now().day <= 10 and now().month in [3, 6, 9, 12] }}
+card:
+  type: vertical-stack
+  cards:
+    - type: markdown
+      content: >-
+        {% set count = states('sensor.battery_lifetime_due_next_quarter') %}
+        {% set end = state_attr('sensor.battery_lifetime_due_next_quarter', 'next_quarter_end') %}
+        ## Quarterly battery maintenance
+
+        **{{ count }}** {% if count | int == 1 %}battery{% else %}batteries{% endif %}
+        due before **{{ end | as_datetime | as_local | timestamp_custom('%d %b %Y') if end else 'quarter end' }}**.
+        Sorted soonest first.
+
+    - type: custom:auto-entities
+      card:
+        type: entities
+        show_header_toggle: false
+      show_empty: false
+      filter:
+        template: >-
+          {% set excluded = [
+            'sensor.sm_a217f_battery_level',
+            'sensor.sm_s916b_battery_level',
+            'sensor.helena_flip_4_battery_level',
+            'sensor.wolf_leader_battery_level'
+          ] %}
+          {% set due_flag = entity.entity_id
+             | replace('_replace_by', '_due_next_quarter') %}
+          {{ entity.entity_id.endswith('_replace_by')
+             and is_state(due_flag, 'on')
+             and state_attr(entity.entity_id, 'source_entity') not in excluded }}
+        options:
+          type: custom:template-entity-row
+          icon: >-
+            {% set days = state_attr(config.entity, 'days_until_replace') %}
+            {% if days is not none and days < 0 %}mdi:battery-alert
+            {% else %}mdi:battery-clock{% endif %}
+          icon_color: >-
+            {% set days = state_attr(config.entity, 'days_until_replace') %}
+            {% if days is none %}disabled
+            {% elif days < 0 %}red
+            {% elif days <= 30 %}orange
+            {% else %}amber{% endif %}
+          name: >-
+            {{ state_attr(config.entity, 'source_entity')
+               | default(config.entity)
+               | replace('sensor.', '')
+               | replace('_battery_level', '')
+               | replace('_battery', '')
+               | replace('_', ' ')
+               | regex_replace(find='\\s(temperature|temp)\\s', replace=' temp. ', ignorecase=True)
+               | title }}
+          state: >-
+            {% set days = state_attr(config.entity, 'days_until_replace') %}
+            {% set due = states(config.entity) %}
+            {% if days is not none and days < 0 %}Overdue · {{ due | as_datetime | as_local | timestamp_custom('%d %b') }}
+            {% elif days is not none and days == 0 %}Due today
+            {% elif days is not none %}{{ days }} day{% if days != 1 %}s{% endif %} · {{ due | as_datetime | as_local | timestamp_custom('%d %b') }}
+            {% else %}Unknown{% endif %}
+          secondary: >-
+            {% set pct = state_attr(config.entity, 'last_observed_pct') %}
+            {% set conf = state_attr(config.entity, 'confidence') %}
+            {% set rate = state_attr(config.entity, 'drain_rate_pct_day') %}
+            {% if pct is not none %}{{ pct | round(0) }}% now{% else %}% unknown{% endif %}
+            · {{ conf }}
+            {% if rate is not none %} · {{ rate | round(2) }}%/d{% endif %}
+            {% if conf == 'profile_default' %} · profile estimate{% endif %}
+            {% if conf == 'stale' %} · source stale{% endif %}
+      sort:
+        method: attribute
+        attribute: days_until_replace
+        numeric: true
+        reverse: false
