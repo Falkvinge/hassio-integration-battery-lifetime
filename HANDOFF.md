@@ -2,7 +2,7 @@
 
 ## Current State (2026-05-11, late-morning)
 
-The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.4** on GitHub via HACS.
+The Battery Lifetime custom Home Assistant integration is working and deployed via HACS on the user's live install (70 battery-powered devices → 554 companion entities). Current release is **v0.1.6** on GitHub via HACS.
 
 The OpenSpec change `add-battery-lifetime` is at 56/62 tasks; the remaining six (10.2–10.7) are manual-validation gates against a real HA install. Some are implicitly being validated right now by the live install; see "What Needs Doing Next" below.
 
@@ -28,7 +28,8 @@ The OpenSpec changes `optimize-coordinator-tick` (v0.1.2), `defer-cold-start-bac
 - v0.1.2 ships three coordinator scheduling optimizations (drop redundant 10-minute timer, per-source-event O(1) update via `async_set_updated_data`, diff-gated heartbeat publish). 5 new tests in `tests/test_coordinator.py`, full suite 112 passed.
 - v0.1.3 defers cold-start backfill out of `async_setup`'s await chain via `hass.async_create_task`, removing the multi-minute config-entry freeze on installs with many batteries (the v0.1.1 dialog warning is no longer applicable and was softened). Adds a one-shot `persistent_notification` (`battery_lifetime_cold_start_complete`) when the initial backfill batch finishes. Ships `brand/logo.png` + `brand/logo@2x.png` (copies of the icon assets) for HA's Brands Proxy logo slot. 3 new tests in `tests/test_coordinator.py`, full suite 115 passed.
 - v0.1.4 closes the orphan-companion-entity gap: when `prune_removed_older_than` actually drops a `unique_id` from the JSON store (after the 30-day grace window), the coordinator now removes the per-source companion device via `device_registry.async_remove_device`. HA's device-registry removal cascades to the entity registry and clears the eight per-source companion entries automatically. Cleanup runs from both prune call sites (`_async_registry_changed action: remove` + `_handle_tick`). Idempotent on missing device. Soft-deleted entries within their grace window are NOT touched; restore semantics are unchanged. 3 new tests, full suite 118 passed.
-- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2`/`v0.1.3`/`v0.1.4` pushed to gitea (origin) and GitHub (github).
+- v0.1.6 fixes the cold-start backfill completion notification firing on every HA restart. The one-shot `persistent_notification` (`battery_lifetime_cold_start_complete`) is now gated by a persisted `cold_start_backfill_announced` flag in the JSON store; backfill still re-runs silently on restart for batteries without `replaced_on` (idempotent, per spec). Upgrades with existing battery entries migrate the flag to `true` so no spurious notification on first restart after update. 1 new test, full suite 127 passed.
+- Both `master` and tags `v0.1.0`/`v0.1.1`/`v0.1.2`/`v0.1.3`/`v0.1.4`/`v0.1.5`/`v0.1.6` pushed to gitea (origin) and GitHub (github).
 - README and OpenSpec specs aligned with the implementation; `replacement-detection/spec.md` enumerates the three stale-prior services explicitly. `coordinator-scheduling/spec.md` documents the per-event vs heartbeat contracts, the non-blocking cold-start contract, AND the prune-driven companion-device purge.
 
 ## What Needs Doing Next (Immediate)

@@ -542,6 +542,45 @@ async def test_no_pending_backfill_no_notification(hass: Any) -> None:
     await coord.async_shutdown()
 
 
+async def test_cold_start_completion_not_repeated_on_restart(hass: Any) -> None:
+    """The backfill-complete notification fires once, not on every HA restart."""
+    from unittest.mock import patch
+
+    from homeassistant.components.persistent_notification import (
+        _async_get_or_create_notifications,
+    )
+
+    registry = er.async_get(hass)
+    _register(registry, entity_id="sensor.foo_battery", unique_id="uid-foo")
+    hass.states.async_set("sensor.foo_battery", "84", {})
+
+    store = BatteryLifetimeStore(hass)
+    await store.async_load()
+    coord = BatteryLifetimeCoordinator(hass, store=store)
+    await coord.async_setup()
+    await hass.async_block_till_done()
+
+    notifications = _async_get_or_create_notifications(hass)
+    assert "battery_lifetime_cold_start_complete" in notifications
+    assert store.cold_start_backfill_announced is True
+    await store.async_save()
+    await coord.async_shutdown()
+
+    store_reload = BatteryLifetimeStore(hass)
+    await store_reload.async_load()
+    assert store_reload.cold_start_backfill_announced is True
+
+    with patch(
+        "homeassistant.components.persistent_notification.async_create"
+    ) as mock_create:
+        coord_reload = BatteryLifetimeCoordinator(hass, store=store_reload)
+        await coord_reload.async_setup()
+        await hass.async_block_till_done()
+        mock_create.assert_not_called()
+
+    await coord_reload.async_shutdown()
+
+
 async def test_purge_companions_for_pruned_removes_device(hass: Any) -> None:
     """A pruned source's companion device is removed from the device registry."""
     from pytest_homeassistant_custom_component.common import MockConfigEntry

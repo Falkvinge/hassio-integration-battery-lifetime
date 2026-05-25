@@ -1,7 +1,7 @@
 {
   "domain": "battery_lifetime",
   "name": "Battery Lifetime",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "documentation": "https://github.com/Falkvinge/hassio-integration-battery-lifetime",
   "issue_tracker": "https://github.com/Falkvinge/hassio-integration-battery-lifetime/issues",
   "codeowners": ["@rickfalkvinge"],

@@ -27,6 +27,7 @@ async def store(hass: Any) -> BatteryLifetimeStore:
 
 async def test_fresh_store_loads_defaults(store: BatteryLifetimeStore) -> None:
     assert store.default_profile == DEFAULT_PROFILE
+    assert store.cold_start_backfill_announced is False
     assert list(store.iter_batteries()) == []
 
 
@@ -104,6 +105,7 @@ async def test_migration_fills_missing_fields(
     assert entry["profile"] == DEFAULT_PROFILE
     assert entry["tracking_enabled"] is True
     assert entry["threshold_override"] is None
+    assert store.cold_start_backfill_announced is True
 
 
 async def test_remove_then_prune(store: BatteryLifetimeStore) -> None:

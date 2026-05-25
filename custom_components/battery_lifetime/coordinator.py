@@ -274,6 +274,8 @@ class BatteryLifetimeCoordinator(
                 self._announce_backfill_complete()
 
     def _announce_backfill_complete(self) -> None:
+        if self._store.cold_start_backfill_announced:
+            return
         persistent_notification.async_create(
             self.hass,
             (
@@ -284,6 +286,7 @@ class BatteryLifetimeCoordinator(
             title="Battery Lifetime: backfill complete",
             notification_id="battery_lifetime_cold_start_complete",
         )
+        self._store.set_cold_start_backfill_announced()
 
     def _purge_companions_for_pruned(self, unique_ids: list[str]) -> None:
         """Remove the companion device for each pruned source.

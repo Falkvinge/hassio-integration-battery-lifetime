@@ -46,6 +46,7 @@ def _empty_data(default_profile: str = DEFAULT_PROFILE) -> dict[str, Any]:
     return {
         "version": STORAGE_VERSION,
         "default_profile": default_profile,
+        "cold_start_backfill_announced": False,
         "batteries": {},
     }
 
@@ -110,6 +111,9 @@ class BatteryLifetimeStore:
             )
         data.setdefault("default_profile", DEFAULT_PROFILE)
         data.setdefault("batteries", {})
+        if "cold_start_backfill_announced" not in data:
+            # Existing installs already passed the initial backfill phase.
+            data["cold_start_backfill_announced"] = bool(data["batteries"])
         data["version"] = STORAGE_VERSION
         for entry in data["batteries"].values():
             for field in _PER_BATTERY_FIELDS:
@@ -124,6 +128,18 @@ class BatteryLifetimeStore:
     def default_profile(self) -> str:
         self._ensure_loaded()
         return str(self._data.get("default_profile", DEFAULT_PROFILE))
+
+    @property
+    def cold_start_backfill_announced(self) -> bool:
+        """Whether the one-time cold-start backfill notification was shown."""
+        self._ensure_loaded()
+        return bool(self._data.get("cold_start_backfill_announced"))
+
+    def set_cold_start_backfill_announced(self) -> None:
+        """Mark the initial cold-start backfill batch as announced."""
+        self._ensure_loaded()
+        self._data["cold_start_backfill_announced"] = True
+        self.async_save_debounced()
 
     def set_default_profile(self, profile: str) -> None:
         self._ensure_loaded()
